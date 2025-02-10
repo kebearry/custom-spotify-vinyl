@@ -8,6 +8,15 @@ export default {
   ],
   theme: {
     extend: {
+      animation: {
+        "spin-slow": "spin 20s linear infinite",
+      },
+      keyframes: {
+        tonearmMove: {
+          "0%": { transform: "rotate(-12deg)" },
+          "100%": { transform: "rotate(12deg)" },
+        },
+      },
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
