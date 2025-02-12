@@ -1,14 +1,35 @@
 import { NextResponse } from 'next/server';
 import { MongoClient } from 'mongodb';
 
-const uri = process.env.MONGODB_URI!;
-const client = new MongoClient(uri);
+// Create cached connection variable
+let cachedClient: MongoClient | null = null;
+
+// Function to connect to database
+async function connectToDatabase() {
+  if (cachedClient) {
+    return cachedClient;
+  }
+
+  if (!process.env.MONGODB_URI) {
+    throw new Error('Please define MONGODB_URI environment variable');
+  }
+
+  try {
+    const client = new MongoClient(process.env.MONGODB_URI);
+    await client.connect();
+    cachedClient = client;
+    return client;
+  } catch (error) {
+    console.error('MongoDB connection error:', error);
+    throw new Error('Failed to connect to database');
+  }
+}
 
 export async function POST(request: Request) {
   try {
     const { trackId, note } = await request.json();
-
-    await client.connect();
+    
+    const client = await connectToDatabase();
     const database = client.db('vinyl-player');
     const notes = database.collection('notes');
 
@@ -16,15 +37,19 @@ export async function POST(request: Request) {
       trackId,
       content: note.content,
       timestamp: new Date(),
-      reactions: {}  // Initialize empty reactions
+      reactions: {},
+      isShared: true  // Add this if you want all notes to be shared by default
     });
 
     return NextResponse.json({ success: true, noteId: result.insertedId });
   } catch (error) {
     console.error('Failed to save note:', error);
-    return NextResponse.json({ error: 'Failed to save note' }, { status: 500 });
-  } finally {
-    await client.close();
+    return NextResponse.json({ 
+      error: 'Failed to save note',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { 
+      status: 500 
+    });
   }
 }
 
@@ -37,7 +62,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Track ID is required' }, { status: 400 });
     }
 
-    await client.connect();
+    console.log('Fetching notes for trackId:', trackId); // Debug log
+
+    const client = await connectToDatabase();
     const database = client.db('vinyl-player');
     const notes = database.collection('notes');
 
@@ -45,16 +72,21 @@ export async function GET(request: Request) {
     const trackNotes = await notes
       .find({ 
         trackId,
-        isShared: true // Only get shared notes
+        isShared: true
       })
       .sort({ timestamp: -1 })
       .toArray();
 
+    console.log('Found notes:', trackNotes.length); // Debug log
+
     return NextResponse.json({ notes: trackNotes });
   } catch (error) {
     console.error('Failed to fetch notes:', error);
-    return NextResponse.json({ error: 'Failed to fetch notes' }, { status: 500 });
-  } finally {
-    await client.close();
+    return NextResponse.json({ 
+      error: 'Failed to fetch notes',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { 
+      status: 500 
+    });
   }
 } 
