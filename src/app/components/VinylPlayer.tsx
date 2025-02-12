@@ -87,26 +87,61 @@ export default function VinylPlayer({
       
       if (!data.track || !playlist) return;
 
-      // Check if current track is in playlist
-      const trackInPlaylist = playlist.tracks.items.some(
-        (item: PlaylistTrack) => item.track.id === data.track.id
-      );
+      // Check if this is a new track
+      if (track?.id !== data.track.id) {
+        console.log("Track changed:", {
+          from: track?.name,
+          to: data.track.name
+        });
 
-      // Show premium message if track is not in playlist and user is not premium
-      if (!trackInPlaylist && !isPremium) {
-        setShowPremiumMessage(true);
-        setTimeout(() => setShowPremiumMessage(false), 5000);
-      } else {
-        setShowPremiumMessage(false);
+        // Check if the new track is in playlist
+        const trackInPlaylist = playlist.tracks.items.some(
+          item => item.track.id === data.track.id
+        );
+
+        console.log("New track check:", {
+          track: data.track.name,
+          inPlaylist: trackInPlaylist,
+          isPremium
+        });
+
+        // If premium user and track not in playlist, switch to playlist
+        if (!trackInPlaylist && isPremium && data.device?.id) {
+          console.log("New track not in playlist - switching to playlist");
+          setTransitionMessage(`Switching from "${data.track.name}" to playlist...`);
+          
+          const playResponse = await fetch("/api/spotify/play", {
+            method: "PUT",
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 
+              deviceId: data.device.id,
+              contextUri: `spotify:playlist:${playlistId}`,
+              offset: { position: 0 },
+              position_ms: 0
+            }),
+          });
+
+          if (!playResponse.ok) {
+            console.error("Failed to switch to playlist:", await playResponse.text());
+            setShowPremiumMessage(true);
+            setTimeout(() => setShowPremiumMessage(false), 5000);
+          } else {
+            setTimeout(() => setTransitionMessage(null), 3000);
+          }
+        } else if (!trackInPlaylist && !isPremium) {
+          // Show premium message for non-premium users
+          setShowPremiumMessage(true);
+          setTimeout(() => setShowPremiumMessage(false), 5000);
+        }
       }
 
       // Update track state
-      if (!track || track.id !== data.track.id || isPlaying !== data.isPlaying) {
-        setTrack(data.track);
-        setIsPlaying(data.isPlaying);
-        setDevice(data.device);
-        setError(null);
-      }
+      setTrack(data.track);
+      setIsPlaying(data.isPlaying);
+      setDevice(data.device);
+      setError(null);
 
     } catch (error) {
       console.error('Error getting current track:', error);
@@ -115,7 +150,7 @@ export default function VinylPlayer({
       }
       setError(error instanceof Error ? error.message : 'Failed to get current track');
     }
-  }, [lastApiCall, track, isPlaying, playlist, isPremium]);
+  }, [lastApiCall, track, isPlaying, playlist, playlistId, isPremium]);
 
   const checkAuth = async () => {
     try {
@@ -143,10 +178,7 @@ export default function VinylPlayer({
       setIsAuthenticated(true);
       console.log("2. Authentication successful");
 
-      // Wait a moment before making additional requests
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Check premium status
+      // Check premium status first
       console.log("3. Checking premium status...");
       const accountResponse = await fetch('/api/spotify/check-account');
       if (!accountResponse.ok) {
@@ -154,73 +186,107 @@ export default function VinylPlayer({
       }
       
       const accountData = await accountResponse.json();
-      setIsPremium(accountData.isPremium);
-      console.log("4. Premium status:", accountData.isPremium);
+      const isPremiumUser = accountData.isPremium;
+      setIsPremium(isPremiumUser);
+      console.log("4. Premium status:", isPremiumUser);
 
-      // Get playlist first
-      console.log("5. Fetching playlist...");
-      const playlistResponse = await fetch(`/api/spotify/check-playlist?playlistId=${playlistId}`);
-      if (!playlistResponse.ok) {
-        throw new Error(`Failed to fetch playlist: ${playlistResponse.status}`);
-      }
-
-      const playlistData = await playlistResponse.json();
-      setPlaylist(playlistData);
-      console.log("6. Playlist fetched successfully");
-
-      // Then get current track
-      console.log("7. Getting current track...");
+      // Get current track first
+      console.log("5. Getting current track...");
       const trackResponse = await fetch('/api/spotify/current-track');
       if (!trackResponse.ok) {
         throw new Error(`Failed to fetch current track: ${trackResponse.status}`);
       }
 
       const trackData = await trackResponse.json();
-      console.log("8. Current track fetched successfully");
+      if (!trackData.track) {
+        throw new Error("No track currently playing");
+      }
 
-      if (trackData.track && playlistData.tracks.items) {
-        const trackInPlaylist = playlistData.tracks.items.some(
-          (item: PlaylistTrack) => item.track.id === trackData.track.id
-        );
+      console.log("6. Current track:", trackData.track.name);
 
-        setTrack(trackData.track);
-        setIsPlaying(trackData.isPlaying);
-        setDevice(trackData.device);
+      // Get playlist
+      console.log("7. Fetching playlist...", playlistId);
+      const playlistResponse = await fetch(`/api/spotify/get-playlist?id=${playlistId}`);
+      if (!playlistResponse.ok) {
+        const errorText = await playlistResponse.text();
+        console.error("Playlist fetch error:", errorText);
+        throw new Error(`Failed to fetch playlist (${playlistResponse.status}): ${errorText}`);
+      }
 
-        console.log("9. Track in playlist check:", { 
-          track: trackData.track.name, 
-          inPlaylist: trackInPlaylist 
-        });
+      const playlistData = await playlistResponse.json();
+      if (!playlistData || !playlistData.tracks?.items) {
+        throw new Error("Invalid playlist data received");
+      }
+      
+      setPlaylist(playlistData);
+      console.log("8. Playlist fetched successfully:", playlistData.name);
 
-        if (!trackInPlaylist && accountData.isPremium) {
-          console.log("10. Attempting to switch to playlist...");
+      const trackInPlaylist = playlistData.tracks.items.some(
+        (item: PlaylistTrack) => item.track.id === trackData.track.id
+      );
+
+      setTrack(trackData.track);
+      setIsPlaying(trackData.isPlaying);
+      setDevice(trackData.device);
+
+      console.log("9. Track check:", { 
+        track: trackData.track.name, 
+        inPlaylist: trackInPlaylist,
+        isPremium: isPremiumUser,
+        deviceId: trackData.device?.id
+      });
+
+      // For premium users, ALWAYS try to switch to playlist if not already playing from it
+      if (isPremiumUser && trackData.device?.id) {
+        // Check if we're already playing from the correct context
+        const currentContext = trackData.context?.uri;
+        const targetContext = `spotify:playlist:${playlistId}`;
+        
+        if (currentContext !== targetContext) {
+          console.log("10. Premium user - forcing playlist switch");
           setTransitionMessage(`Switching from "${trackData.track.name}" to playlist...`);
 
-          const playResponse = await fetch("/api/spotify/play", {
-            method: "PUT",
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ 
-              deviceId: trackData.device?.id,
-              contextUri: `spotify:playlist:${playlistId}`,
-              offset: { position: 0 },
-              position_ms: 0
-            }),
-          });
+          try {
+            // Force switch to playlist
+            const playResponse = await fetch("/api/spotify/play", {
+              method: "PUT",
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ 
+                deviceId: trackData.device.id,
+                contextUri: targetContext,
+                offset: { position: 0 },
+                position_ms: 0
+              }),
+            });
 
-          if (!playResponse.ok) {
-            console.error("Play response error:", await playResponse.text());
-          } else {
-            console.log("11. Successfully switched to playlist");
+            if (!playResponse.ok) {
+              throw new Error(await playResponse.text());
+            }
+
+            console.log("11. Successfully initiated playlist switch");
             setTimeout(() => setTransitionMessage(null), 3000);
+          } catch (error) {
+            console.error("Failed to switch to playlist:", error);
+            // Show manual switch message if automatic switch fails
+            setShowPremiumMessage(true);
+            setTimeout(() => setShowPremiumMessage(false), 5000);
           }
+        } else {
+          console.log("Already playing from the correct playlist");
         }
+      } else if (!trackInPlaylist) {
+        // Non-premium user or no active device - show manual switch message
+        setShowPremiumMessage(true);
+        setTimeout(() => setShowPremiumMessage(false), 5000);
       }
 
     } catch (error) {
       console.error("Error in auth check:", error);
       setError(error instanceof Error ? error.message : "Failed to initialize playback");
+      setShowPremiumMessage(true);
+      setTimeout(() => setShowPremiumMessage(false), 5000);
     }
   };
 
