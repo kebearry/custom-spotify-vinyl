@@ -10,6 +10,11 @@ if (!process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI) {
   );
 }
 
+// Ensure redirect URI has protocol
+const redirectUri = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI.startsWith('http')
+  ? process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI
+  : `https://${process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI}`;
+
 const scopes = [
   "user-read-playback-state",
   "user-modify-playback-state",
@@ -26,7 +31,7 @@ const scopes = [
 const authParams = {
   client_id: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID,
   response_type: "code",
-  redirect_uri: process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI,
+  redirect_uri: redirectUri, // Use the processed redirect URI
   scope: scopes,
   show_dialog: "true",
 } as const;
@@ -38,7 +43,7 @@ const LOGIN_URL =
 // Initialize with only the client-side needed credentials
 const spotifyApi = new SpotifyWebApi({
   clientId: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID,
-  redirectUri: process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI,
+  redirectUri: redirectUri, // Use the processed redirect URI
 });
 
 // Helper function to set the access token
