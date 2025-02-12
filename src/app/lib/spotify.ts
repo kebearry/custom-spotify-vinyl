@@ -10,44 +10,43 @@ if (!process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI) {
   );
 }
 
-const redirectUri = process.env.NODE_ENV === 'production'
-  ? 'https://custom-spotify-vinyl.vercel.app/api/auth/callback/spotify'
-  : 'http://localhost:3000/api/auth/callback/spotify';
+const redirectUri =
+  process.env.NODE_ENV === "production"
+    ? "https://custom-spotify-vinyl.vercel.app/api/auth/callback/spotify"
+    : "http://localhost:3000/api/auth/callback/spotify";
 
 const scopes = [
   // Playback scopes
-  'user-read-playback-state',
-  'user-modify-playback-state',
-  'user-read-currently-playing',
-  'streaming',
-  
+  "user-read-playback-state",
+  "user-modify-playback-state",
+  "user-read-currently-playing",
+  "streaming",
+
   // Playlist scopes
-  'playlist-read-private',
-  'playlist-read-collaborative',
-  'playlist-modify-public',
-  'playlist-modify-private',
-  
+  "playlist-read-private",
+  "playlist-read-collaborative",
+  "playlist-modify-public",
+  "playlist-modify-private",
+
   // User scopes
-  'user-read-email',
-  'user-read-private',
-  
-  // Queue scopes
-  'user-read-playback-queue',
-  
-  // Additional playback scopes
-  'app-remote-control',
-  'user-read-playback-position'
-].join(' ');
+  "user-read-email",
+  "user-read-private",
+
+  // Library scopes
+  "user-library-read",
+  "user-library-modify",
+].join(" ");
 
 const params = {
   scope: scopes,
-  response_type: 'code',
+  response_type: "code",
   client_id: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID,
   redirect_uri: redirectUri,
-  show_dialog: 'true'
+  show_dialog: "true",
 };
 
-export const LOGIN_URL = 'https://accounts.spotify.com/authorize?' + new URLSearchParams(params);
+export const LOGIN_URL =
+  "https://accounts.spotify.com/authorize?" + new URLSearchParams(params);
 
 // Initialize with only the client-side needed credentials
 const spotifyApi = new SpotifyWebApi({

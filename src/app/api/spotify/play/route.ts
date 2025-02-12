@@ -1,83 +1,60 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import SpotifyWebApi from 'spotify-web-api-node';
+import { getAccessToken } from '../../../lib/spotify/auth/get-access-token';
 
 export async function PUT(request: Request) {
-  const cookieStore = await cookies();
-  const accessToken = cookieStore.get('spotify_access_token')?.value;
-
-  if (!accessToken) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
-  const spotifyApi = new SpotifyWebApi({
-    clientId: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID,
-    clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
-  });
-
-  spotifyApi.setAccessToken(accessToken);
-
   try {
-    const { deviceId, trackUri, contextUri, position_ms } = await request.json();
-
-    if (!trackUri) {
-      return NextResponse.json({ error: 'No track URI provided' }, { status: 400 });
-    }
-
-    interface PlayOptions {
-      device_id: string;
-      position_ms?: number;
-      context_uri?: string;
-      offset?: { uri: string };
-      uris?: string[];
-    }
-
-    const playOptions: PlayOptions = {
-      device_id: deviceId,
-      position_ms: position_ms || 0
-    };
-
-    if (contextUri) {
-      // If we have a playlist context
-      playOptions.context_uri = contextUri;
-      playOptions.offset = { uri: trackUri };
-    } else {
-      // If we're just playing a single track
-      playOptions.uris = [trackUri];
-    }
-
-    console.log('Play options:', playOptions); // Debug log
-
-    const result = await spotifyApi.play(playOptions);
+    const accessToken = await getAccessToken();
     
-    // Check if the result exists and has a status code
-    if (result && result.statusCode >= 200 && result.statusCode < 300) {
-      return NextResponse.json({ 
-        success: true,
-        message: 'Playback started successfully'
-      });
-    } else {
-      throw new Error('Unexpected response from Spotify API');
-    }
-  } catch (error: unknown) {
-    console.error('Error starting playback:', error);
-    
-    if (error && typeof error === 'object' && 'body' in error) {
-      const spotifyError = error as { body: { error: { message: string; status: number } } };
-      return NextResponse.json({ 
-        error: spotifyError.body.error.message || 'Failed to start playback',
-        code: spotifyError.body.error.status || 500
-      }, { 
-        status: spotifyError.body.error.status || 500 
-      });
+    if (!accessToken) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    // Generic error handling
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Failed to start playback',
-      code: 500
-    }, { 
-      status: 500 
+    const body = await request.json();
+    const { deviceId, contextUri, offset, position_ms } = body;
+
+    // Base URL for the play endpoint
+    let url = 'https://api.spotify.com/v1/me/player/play';
+    
+    // Add device_id as query parameter if provided
+    if (deviceId) {
+      url += `?device_id=${deviceId}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        context_uri: contextUri,
+        offset: offset,
+        position_ms: position_ms
+      }),
     });
+
+    // If the response is 204 (success with no content) or 200
+    if (response.status === 204 || response.status === 200) {
+      return NextResponse.json({ success: true });
+    }
+
+    // If there's an error, get the error details
+    const errorData = await response.json();
+    console.error('Spotify play error:', errorData);
+
+    return NextResponse.json(
+      { 
+        error: errorData.error?.message || 'Failed to start playback',
+        details: errorData
+      }, 
+      { status: response.status }
+    );
+
+  } catch (error) {
+    console.error('Error in play route:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 } 

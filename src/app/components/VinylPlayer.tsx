@@ -66,7 +66,7 @@ export default function VinylPlayer({
     );
   };
 
-  const getCurrentTrack = useCallback(async () => {
+  const getCurrentTrack = useCallback(async (): Promise<void> => {
     try {
       const now = Date.now();
       if (now - lastApiCall < MIN_API_INTERVAL) {
@@ -84,7 +84,6 @@ export default function VinylPlayer({
       
       if (data.error) {
         setError(data.error);
-        // If there's a playback error, pause the player
         if (isPlaying) {
           await fetch('/api/spotify/pause', { method: 'POST' });
           setIsPlaying(false);
@@ -92,7 +91,78 @@ export default function VinylPlayer({
         return;
       }
 
-      // Handle case where playback has stopped or track is null
+      // If there's a track playing but it's not from our playlist
+      if (data.track && playlist) {
+        const inPlaylist = checkTrackInPlaylist(data.track, playlist.tracks.items);
+        
+        if (!inPlaylist) {
+          console.log('Detected non-playlist track, switching to playlist...');
+          
+          // First, get the current active device
+          const deviceResponse = await fetch('/api/spotify/get-devices');
+          if (!deviceResponse.ok) {
+            throw new Error('Failed to get devices');
+          }
+          const deviceData = await deviceResponse.json();
+          console.log('Device data:', deviceData); // Debug log
+
+          const activeDevice = deviceData.devices?.find((d: SpotifyDevice) => d.is_active);
+          
+          if (!activeDevice) {
+            throw new Error('No active device found');
+          }
+
+          console.log('Using device:', activeDevice); // Debug log
+
+          // Prepare play request payload
+          const playPayload = {
+            deviceId: activeDevice.id,
+            contextUri: `spotify:playlist:${playlistId}`,
+            offset: { position: 0 },
+            position_ms: 0
+          };
+
+          console.log('Play request payload:', playPayload); // Debug log
+
+          // Force switch to our playlist
+          const playResponse = await fetch("/api/spotify/play", {
+            method: "PUT",
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(playPayload),
+          });
+
+          // Log raw response for debugging
+          const rawPlayResponse = await playResponse.text();
+          console.log('Raw play response:', rawPlayResponse);
+
+          if (!playResponse.ok) {
+            // Try to parse the error response
+            let errorData;
+            try {
+              errorData = JSON.parse(rawPlayResponse);
+            } catch {
+              console.error('Failed to parse error response:', rawPlayResponse);
+              throw new Error(`Play request failed with status ${playResponse.status}: ${rawPlayResponse}`);
+            }
+            
+            const errorMessage = errorData.error?.message || errorData.error?.reason || 'Unknown error';
+            console.error("Failed to switch to playlist:", errorMessage);
+            throw new Error(`Failed to switch to playlist: ${errorMessage}`);
+          }
+          
+          // Successfully switched to playlist
+          console.log('Successfully switched to playlist');
+          setIsPlaying(true);
+          
+          // Wait a moment before getting the current track again
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          return getCurrentTrack();
+        }
+      }
+
+      // Handle case where playback has stopped
       if (!data.track && isPlaying) {
         setIsPlaying(false);
         setTrack(null);
@@ -100,59 +170,136 @@ export default function VinylPlayer({
         return;
       }
 
-      // Only update if something has changed
-      if (
-        !track || 
-        track.id !== data.track?.id || 
-        isPlaying !== data.isPlaying
-      ) {
+      // Update track and state
+      if (!track || track.id !== data.track?.id || isPlaying !== data.isPlaying) {
         setTrack(data.track);
         setIsPlaying(data.isPlaying);
         setDevice(data.device);
         setError(null);
-
-        // Check playlist context only when track changes
-        if (playlist && data.track) {
-          const inPlaylist = checkTrackInPlaylist(data.track, playlist.tracks.items);
-          
-          if (!inPlaylist) {
-            await fetch('/api/spotify/pause', { method: 'POST' });
-            setIsPlaying(false);
-            setError('Playback limited to playlist tracks only');
-          }
-        }
       }
     } catch (error) {
-      console.error('Error getting current track:', error);
+      console.error('Error in getCurrentTrack:', error);
       if (isPlaying) {
         setIsPlaying(false);
       }
       setError(error instanceof Error ? error.message : 'Failed to get current track');
     }
-  }, [lastApiCall, track, isPlaying, playlist]);
+  }, [lastApiCall, track, isPlaying, playlist, playlistId]);
 
   useEffect(() => {
     // Check if we have an access token in cookies
     const checkAuth = async () => {
       try {
+        // Verify playlist ID exists
+        if (!playlistId) {
+          throw new Error("Playlist ID is not defined");
+        }
+        console.log("Using playlist ID:", playlistId);
+
         const response = await fetch("/api/spotify/check-auth");
+        if (!response.ok) {
+          throw new Error(`Auth check failed with status: ${response.status}`);
+        }
+        
         const data = await response.json();
+        console.log("Auth check response:", data);
 
         if (data.authenticated) {
           setIsAuthenticated(true);
-          // Get current playing track
-          getCurrentTrack();
+          
+          // First, verify premium status
+          const accountResponse = await fetch('/api/spotify/check-account');
+          const accountData = await accountResponse.json();
+          
+          if (!accountData.isPremium) {
+            throw new Error("Spotify Premium is required for playback control");
+          }
+          
+          // First, verify the playlist exists and is accessible
+          const playlistResponse = await fetch(`/api/spotify/check-playlist?playlistId=${playlistId}`);
+          if (!playlistResponse.ok) {
+            throw new Error("Cannot access playlist. Please check the playlist ID and permissions.");
+          }
+          
+          // Then get devices
+          const deviceResponse = await fetch('/api/spotify/get-devices');
+          if (!deviceResponse.ok) {
+            throw new Error(`Device check failed with status: ${deviceResponse.status}`);
+          }
+          
+          const deviceData = await deviceResponse.json();
+          console.log("Device data:", deviceData);
+          
+          if (deviceData.devices?.length) {
+            // Find active device or use first available
+            const activeDevice = deviceData.devices.find((d: SpotifyDevice) => d.is_active);
+            
+            if (!activeDevice) {
+              throw new Error("No active Spotify device found. Please start playing any track in Spotify first.");
+            }
+            
+            setDevice(activeDevice);
+            console.log("Using device:", activeDevice);
+            
+            // Wait a short moment before trying to play
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Try to start playback
+            const playPayload = {
+              deviceId: activeDevice.id,
+              contextUri: `spotify:playlist:${playlistId}`,
+              offset: { position: 0 },
+              position_ms: 0
+            };
+
+            console.log("Attempting to play with payload:", playPayload);
+
+            const playResponse = await fetch("/api/spotify/play", {
+              method: "PUT",
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(playPayload),
+            });
+            
+            const rawPlayResponse = await playResponse.text();
+            console.log("Raw play response:", rawPlayResponse);
+            
+            if (!playResponse.ok) {
+              let errorMessage = "Failed to start playlist";
+              try {
+                const errorData = rawPlayResponse ? JSON.parse(rawPlayResponse) : {};
+                if (errorData.error?.reason === 'PREMIUM_REQUIRED') {
+                  errorMessage = "Spotify Premium is required for playback control";
+                  console.warn("Premium required warning:", errorMessage);
+                  setError(errorMessage);
+                  return;
+                }
+                errorMessage = errorData.error?.message || errorMessage;
+                console.error("Playback error details:", errorData);
+              } catch {
+                console.error("Failed to parse error response:", rawPlayResponse);
+              }
+              throw new Error(errorMessage);
+            }
+            
+            console.log("Successfully started playback");
+            setIsPlaying(true);
+            getCurrentTrack();
+          } else {
+            throw new Error("No Spotify devices found. Please open Spotify on any device.");
+          }
         }
       } catch (error) {
-        console.error("Error checking auth:", error);
+        console.error("Error in auth check:", error);
+        setError(error instanceof Error ? error.message : "Failed to initialize playback");
       }
     };
 
     checkAuth();
-    // Poll less frequently (every 10 seconds instead of 5)
     const interval = setInterval(getCurrentTrack, 10000);
     return () => clearInterval(interval);
-  }, [getCurrentTrack]);
+  }, [getCurrentTrack, playlistId, setError, setIsAuthenticated, setDevice, setIsPlaying]);
 
   const togglePlayback = async () => {
     try {
@@ -380,6 +527,30 @@ export default function VinylPlayer({
       const activeDevice = data.devices.find((d: SpotifyDevice) => d.is_active) || data.devices[0];
       setDevice(activeDevice);
       setError(null);
+
+      // If we found an active device, start our playlist
+      if (activeDevice) {
+        const playResponse = await fetch("/api/spotify/play", {
+          method: "PUT",
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ 
+            deviceId: activeDevice.id,
+            contextUri: `spotify:playlist:${playlistId}`,
+            position_ms: 0
+          }),
+        });
+
+        if (!playResponse.ok) {
+          const error = await playResponse.json();
+          console.error("Failed to start playlist:", error);
+          setError("Failed to start playlist. Please try again.");
+        } else {
+          setIsPlaying(true);
+          getCurrentTrack(); // Update the current track display
+        }
+      }
     } catch (error) {
       console.error('Error checking devices:', error);
       setError('Failed to check for Spotify devices. Please try again.');
@@ -427,22 +598,35 @@ export default function VinylPlayer({
                 <div>
                   <h3 className="text-white font-medium mb-2">Connect your Spotify account</h3>
                   <div className="mb-3">
-                    <a
-                      href={LOGIN_URL}
-                      className="inline-flex items-center gap-2 bg-[#1DB954] hover:bg-[#1ed760] 
-                               text-white font-bold py-3 px-6 rounded-full 
-                               transition-all duration-200 transform hover:scale-105
-                               shadow-lg hover:shadow-[#1DB954]/30"
-                    >
-                      <svg 
-                        className="w-5 h-5" 
-                        fill="currentColor" 
-                        viewBox="0 0 24 24"
+                    {isAuthenticated ? (
+                      <div className="flex items-center gap-2 text-emerald-400 bg-emerald-950/30 px-4 py-2 rounded-lg animate-fade-in">
+                        <svg 
+                          className="w-5 h-5" 
+                          fill="currentColor" 
+                          viewBox="0 0 20 20"
+                        >
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        <span>Successfully connected to Spotify!</span>
+                      </div>
+                    ) : (
+                      <a
+                        href={LOGIN_URL}
+                        className="inline-flex items-center gap-2 bg-[#1DB954] hover:bg-[#1ed760] 
+                                 text-white font-bold py-3 px-6 rounded-full 
+                                 transition-all duration-200 transform hover:scale-105
+                                 shadow-lg hover:shadow-[#1DB954]/30"
                       >
-                        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
-                      </svg>
-                      Connect with Spotify
-                    </a>
+                        <svg 
+                          className="w-5 h-5" 
+                          fill="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                        </svg>
+                        Connect with Spotify
+                      </a>
+                    )}
                   </div>
                 </div>
               </div>
