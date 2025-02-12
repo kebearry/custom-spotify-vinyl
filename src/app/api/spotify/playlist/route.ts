@@ -3,72 +3,104 @@ import { cookies } from 'next/headers';
 import SpotifyWebApi from 'spotify-web-api-node';
 
 const PLAYLIST_ID = process.env.SPOTIFY_PLAYLIST_ID || undefined;
-let lastApiCall = 0;
-const MIN_API_INTERVAL = 1000; // 1 second minimum between calls
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    if (!PLAYLIST_ID) {
-      return NextResponse.json({ 
-        error: 'Playlist ID not configured' 
-      }, { status: 500 });
-    }
-
-    const now = Date.now();
-    if (now - lastApiCall < MIN_API_INTERVAL) {
-      return NextResponse.json({ 
-        error: 'Too many requests, please wait' 
-      }, { status: 429 });
-    }
-    lastApiCall = now;
-
     const cookieStore = await cookies();
-    const accessTokenCookie = cookieStore.get('spotify_access_token');
-    const accessToken = accessTokenCookie?.value || undefined;
+    const accessToken = cookieStore.get('spotify_access_token')?.value;
 
     if (!accessToken) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const playlistId = searchParams.get('id');
+
+    if (!playlistId) {
+      return NextResponse.json({ error: 'Playlist ID is required' }, { status: 400 });
+    }
+
+    console.log('Fetching playlist:', playlistId);
+
     const spotifyApi = new SpotifyWebApi({
-      clientId: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID ?? undefined,
-      clientSecret: process.env.SPOTIFY_CLIENT_SECRET ?? undefined,
+      clientId: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID,
+      clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
     });
 
     spotifyApi.setAccessToken(accessToken);
 
-    const playlist = await spotifyApi.getPlaylist(PLAYLIST_ID);
-    
-    if (!playlist?.body) {
-      throw new Error('Invalid playlist response');
-    }
+    try {
+      // First try to get the playlist metadata
+      const metaData = await spotifyApi.getPlaylist(playlistId, { 
+        fields: 'id,name,public'
+      });
+      
+      console.log('Playlist metadata:', {
+        id: metaData.body.id,
+        name: metaData.body.name,
+        public: metaData.body.public
+      });
 
-    return NextResponse.json({ 
-      playlist: {
-        id: playlist.body.id,
-        name: playlist.body.name,
-        description: playlist.body.description,
-        tracks: playlist.body.tracks.items.map(item => item.track),
-        images: playlist.body.images
+      // If we can get metadata, we should be able to get the full playlist
+      const data = await spotifyApi.getPlaylist(playlistId);
+      return NextResponse.json(data.body);
+    } catch (spotifyError: unknown) {
+      interface SpotifyError {
+        statusCode: number;
+        message: string;
+        body: {
+          error?: {
+            status: number;
+            message: string;
+          }
+        }
       }
+      
+      const error = spotifyError as SpotifyError;
+      console.error('Spotify API error:', {
+        status: error.statusCode,
+        message: error.message,
+        body: error.body
+      });
+
+      if (error.statusCode === 403) {
+        // Try one more time with minimal fields
+        try {
+          const publicData = await spotifyApi.getPlaylist(playlistId, { 
+            fields: 'id,name,tracks.items(track(id,name,artists,album))'
+          });
+          console.log('Successfully fetched public data');
+          return NextResponse.json(publicData.body);
+        } catch (publicError: unknown) {
+          const error = publicError as SpotifyError;
+          console.error('Failed to fetch public data:', error);
+          return NextResponse.json({
+            error: 'Unable to access playlist',
+            details: {
+              message: error.message,
+              statusCode: error.statusCode,
+              isPublic: true
+            }
+          }, { status: 403 });
+        }
+      }
+
+      return NextResponse.json({
+        error: 'Failed to fetch playlist',
+        details: {
+          message: error.message,
+          statusCode: error.statusCode
+        }
+      }, { status: error.statusCode || 500 });
+    }
+  } catch (error) {
+    console.error('General error:', error);
+    return NextResponse.json({ 
+      error: 'Failed to fetch playlist',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { 
+      status: 500 
     });
-  } catch (error: unknown) {
-    console.error('Error getting playlist:', error);
-    
-    if (error && typeof error === 'object' && 'statusCode' in error) {
-      if (error.statusCode === 429) {
-        return NextResponse.json({ 
-          error: 'Rate limit exceeded, please wait' 
-        }, { status: 429 });
-      }
-      return NextResponse.json({ 
-        error: 'Failed to get playlist' 
-      }, { status: (error.statusCode as number) || 500 });
-    }
-
-    return NextResponse.json({ 
-      error: 'Failed to get playlist' 
-    }, { status: 500 });
   }
 }
 

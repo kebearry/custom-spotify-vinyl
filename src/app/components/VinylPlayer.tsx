@@ -22,13 +22,20 @@ interface SpotifyDevice {
   id: string;
   name: string;
   type: string;
+  is_active: boolean;
+}
+
+interface PlaylistTrack {
+  track: Track;
 }
 
 interface Playlist {
   id: string;
   name: string;
   description: string;
-  tracks: Track[];
+  tracks: {
+    items: PlaylistTrack[];
+  };
   images: { url: string }[];
 }
 
@@ -47,14 +54,15 @@ export default function VinylPlayer({
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [lastApiCall, setLastApiCall] = useState(0);
+  const playlistId = '1odn9BcsovHl9YoaOb38t6';
 
   const checkTrackInPlaylist = (
     currentTrack: Track | null,
-    playlistTracks: Track[]
+    playlistTracks: PlaylistTrack[]
   ) => {
     if (!currentTrack || !playlistTracks) return false;
     return playlistTracks.some(
-      (playlistTrack) => playlistTrack.id === currentTrack.id
+      (item) => item.track.id === currentTrack.id
     );
   };
 
@@ -105,7 +113,7 @@ export default function VinylPlayer({
 
         // Check playlist context only when track changes
         if (playlist && data.track) {
-          const inPlaylist = checkTrackInPlaylist(data.track, playlist.tracks);
+          const inPlaylist = checkTrackInPlaylist(data.track, playlist.tracks.items);
           
           if (!inPlaylist) {
             await fetch('/api/spotify/pause', { method: 'POST' });
@@ -269,9 +277,8 @@ export default function VinylPlayer({
     }
   };
 
-  const fetchPlaylist = async () => {
+  const fetchPlaylist = useCallback(async () => {
     try {
-      // First check if we're authenticated
       const authResponse = await fetch("/api/spotify/check-auth");
       const authData = await authResponse.json();
       
@@ -281,12 +288,17 @@ export default function VinylPlayer({
         return;
       }
 
-      const response = await fetch('/api/spotify/playlist');
+      if (!playlistId) {
+        setError('No playlist ID provided');
+        return;
+      }
+
+      const response = await fetch(`/api/spotify/playlist?id=${playlistId}`);
       
       if (response.status === 429) {
         setError('Rate limit reached. Retrying...');
         await new Promise(resolve => setTimeout(resolve, 2000));
-        const retryResponse = await fetch('/api/spotify/playlist');
+        const retryResponse = await fetch(`/api/spotify/playlist?id=${playlistId}`);
         if (!retryResponse.ok) {
           const errorData = await retryResponse.json().catch(() => ({}));
           throw new Error(
@@ -294,10 +306,10 @@ export default function VinylPlayer({
           );
         }
         const data = await retryResponse.json();
-        if (!data.playlist) {
+        if (!data) {
           throw new Error('No playlist data received');
         }
-        setPlaylist(data.playlist);
+        setPlaylist(data);
         setError(null);
         return;
       }
@@ -310,11 +322,11 @@ export default function VinylPlayer({
       }
 
       const data = await response.json();
-      if (!data.playlist) {
+      if (!data) {
         throw new Error('No playlist data received');
       }
       
-      setPlaylist(data.playlist);
+      setPlaylist(data);
       setError(null);
     } catch (error) {
       console.error('Error fetching playlist:', error);
@@ -326,19 +338,19 @@ export default function VinylPlayer({
         setIsAuthenticated(false);
       }
     }
-  };
+  }, [playlistId, setError, setIsAuthenticated, setPlaylist]);
 
   useEffect(() => {
     if (isAuthenticated) {
       fetchPlaylist();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, fetchPlaylist]);
 
   useEffect(() => {
     const handlePlaylistEnd = async () => {
       if (track && playlist && !isTransitioning) {
         const isLastTrack =
-          playlist.tracks[playlist.tracks.length - 1].id === track.id;
+          playlist.tracks.items[playlist.tracks.items.length - 1].track.id === track.id;
         if (isLastTrack && isPlaying) {
           setIsTransitioning(true);
           await getCurrentTrack();
@@ -352,36 +364,25 @@ export default function VinylPlayer({
 
   const checkForDevices = async () => {
     try {
-      setError(null);
-
-      // First check if we're authenticated
-      const authResponse = await fetch("/api/spotify/check-auth");
-      const authData = await authResponse.json();
-      
-      if (!authData.authenticated) {
-        setIsAuthenticated(false);
-        return false;
-      }
-
-      // Then check for devices
       const response = await fetch('/api/spotify/devices');
       const data = await response.json();
-      
-      if (!data.devices || data.devices.length === 0) {
-        setError("No active Spotify devices found. Please open Spotify and play a song briefly.");
-        return false;
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch devices');
       }
-      
-      if (!device && data.devices.length > 0) {
-        setDevice(data.devices[0]);
+
+      if (!data.devices?.length) {
+        setError('No Spotify devices found. Please open Spotify on any device.');
+        return;
       }
-      
-      await getCurrentTrack();
-      return true;
+
+      // Find an active device or use the first available one
+      const activeDevice = data.devices.find((d: SpotifyDevice) => d.is_active) || data.devices[0];
+      setDevice(activeDevice);
+      setError(null);
     } catch (error) {
       console.error('Error checking devices:', error);
-      setError("Failed to check for Spotify devices. Please try again.");
-      return false;
+      setError('Failed to check for Spotify devices. Please try again.');
     }
   };
 
@@ -798,18 +799,18 @@ export default function VinylPlayer({
                 <p className="text-blue-200 text-sm mt-1">{playlist.name}</p>
               </div>
               <span className="px-3 py-1 bg-blue-800/50 rounded-full text-blue-100 text-sm">
-                {playlist.tracks.length} tracks
+                {playlist.tracks.items.length} tracks
               </span>
             </div>
           </div>
 
           {/* Tracks List */}
           <div className="max-h-[400px] overflow-y-auto">
-            {playlist.tracks.map((playlistTrack, index) => (
+            {playlist.tracks.items.map((playlistTrack, index) => (
               <div
-                key={playlistTrack.id}
+                key={playlistTrack.track.id}
                 className={`group flex items-center gap-4 px-6 py-4 transition-all duration-200 border-b border-slate-100 ${
-                  track?.id === playlistTrack.id
+                  track?.id === playlistTrack.track.id
                     ? "bg-blue-50"
                     : "hover:bg-slate-50"
                 }`}
@@ -817,7 +818,7 @@ export default function VinylPlayer({
                 {/* Track Number */}
                 <span
                   className={`w-8 text-right font-medium ${
-                    track?.id === playlistTrack.id
+                    track?.id === playlistTrack.track.id
                       ? "text-blue-600"
                       : "text-slate-400 group-hover:text-slate-600"
                   }`}
@@ -830,16 +831,16 @@ export default function VinylPlayer({
                   <div className="flex items-center gap-2">
                     <p
                       className={`truncate font-medium ${
-                        track?.id === playlistTrack.id
+                        track?.id === playlistTrack.track.id
                           ? "text-blue-900"
                           : "text-slate-700"
                       }`}
                     >
-                      {playlistTrack.name}
+                      {playlistTrack.track.name}
                     </p>
 
                     {/* Playing Indicator */}
-                    {track?.id === playlistTrack.id && (
+                    {track?.id === playlistTrack.track.id && (
                       <div className="flex items-center gap-[2px]">
                         {[...Array(3)].map((_, i) => (
                           <div
@@ -858,12 +859,12 @@ export default function VinylPlayer({
                   {/* Artists */}
                   <p
                     className={`text-sm truncate mt-1 ${
-                      track?.id === playlistTrack.id
+                      track?.id === playlistTrack.track.id
                         ? "text-blue-600"
                         : "text-slate-500"
                     }`}
                   >
-                    {playlistTrack.artists
+                    {playlistTrack.track.artists
                       ?.map((artist) => artist.name)
                       .join(", ")}
                   </p>
@@ -872,7 +873,7 @@ export default function VinylPlayer({
                 {/* Duration or other metadata could go here */}
                 <div
                   className={`text-sm ${
-                    track?.id === playlistTrack.id
+                    track?.id === playlistTrack.track.id
                       ? "text-blue-600"
                       : "text-slate-400"
                   }`}
