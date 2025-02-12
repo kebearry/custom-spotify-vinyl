@@ -18,52 +18,24 @@ export async function GET() {
   spotifyApi.setAccessToken(accessToken);
 
   try {
-    const playbackState = await spotifyApi.getMyCurrentPlaybackState();
-    console.log('Playback state:', playbackState.body);
-
-    if (!playbackState.body || !playbackState.body.device) {
-      return NextResponse.json({ 
-        error: 'No active Spotify session found',
-        isPlaying: false,
-        track: null
+    const data = await spotifyApi.getMyCurrentPlaybackState();
+    
+    if (data.body && data.body.item) {
+      return NextResponse.json({
+        track: data.body.item,
+        isPlaying: data.body.is_playing,
+        device: data.body.device,
+        progress_ms: data.body.progress_ms,
+        timestamp: Date.now()
       });
     }
 
-    // Get the current context (playlist, album, etc.)
-    const context = playbackState.body.context;
-    let previousTrack = null;
-    let nextTrack = null;
-
-    if (context && context.type === 'playlist') {
-      // Get the current playlist tracks
-      const playlist = await spotifyApi.getPlaylist(context.uri.split(':')[2]);
-      const tracks = playlist.body.tracks.items;
-      const currentIndex = tracks.findIndex(item => 
-        item.track?.id === playbackState.body.item?.id
-      );
-
-      if (currentIndex > 0) {
-        previousTrack = tracks[currentIndex - 1].track;
-      }
-      if (currentIndex < tracks.length - 1) {
-        nextTrack = tracks[currentIndex + 1].track;
-      }
-    }
-
-    return NextResponse.json({ 
-      track: playbackState.body.item,
-      isPlaying: playbackState.body.is_playing,
-      device: {
-        id: playbackState.body.device.id,
-        name: playbackState.body.device.name,
-        type: playbackState.body.device.type
-      },
-      previousTrack,
-      nextTrack,
-      context: context ? {
-        type: context.type,
-        uri: context.uri
-      } : null
+    return NextResponse.json({
+      track: null,
+      isPlaying: false,
+      device: null,
+      progress_ms: 0,
+      timestamp: Date.now()
     });
   } catch (error) {
     console.error('Error getting current track:', error);

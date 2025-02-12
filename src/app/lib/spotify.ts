@@ -5,7 +5,9 @@ if (!process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID) {
 }
 
 if (!process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI) {
-  throw new Error("Missing NEXT_PUBLIC_SPOTIFY_REDIRECT_URI environment variable");
+  throw new Error(
+    "Missing NEXT_PUBLIC_SPOTIFY_REDIRECT_URI environment variable"
+  );
 }
 
 const scopes = [
@@ -13,6 +15,7 @@ const scopes = [
   "user-modify-playback-state",
   "user-read-currently-playing",
   "streaming",
+  "app-remote-control",
   "playlist-read-private",
   "playlist-read-collaborative",
   "user-read-email",

@@ -67,10 +67,28 @@ export default function VinylPlayer({
       setLastApiCall(now);
 
       const response = await fetch('/api/spotify/current-track');
+      if (!response.ok) {
+        throw new Error(`Failed to get current track: ${response.status}`);
+      }
+      
       const data = await response.json();
+      console.log('Current track data:', data); // Debug log
       
       if (data.error) {
         setError(data.error);
+        // If there's a playback error, pause the player
+        if (isPlaying) {
+          await fetch('/api/spotify/pause', { method: 'POST' });
+          setIsPlaying(false);
+        }
+        return;
+      }
+
+      // Handle case where playback has stopped or track is null
+      if (!data.track && isPlaying) {
+        setIsPlaying(false);
+        setTrack(null);
+        setError("Playback stopped unexpectedly");
         return;
       }
 
@@ -91,17 +109,17 @@ export default function VinylPlayer({
           
           if (!inPlaylist) {
             await fetch('/api/spotify/pause', { method: 'POST' });
+            setIsPlaying(false);
             setError('Playback limited to playlist tracks only');
           }
         }
       }
     } catch (error) {
       console.error('Error getting current track:', error);
-      if (error && typeof error === 'object' && 'statusCode' in error) {
-        if (error.statusCode === 429) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+      if (isPlaying) {
+        setIsPlaying(false);
       }
+      setError(error instanceof Error ? error.message : 'Failed to get current track');
     }
   }, [lastApiCall, track, isPlaying, playlist]);
 
@@ -135,25 +153,61 @@ export default function VinylPlayer({
         return;
       }
 
-      setError(null);
-      const response = await fetch("/api/spotify/toggle-playback", {
-        method: "POST",
-        body: JSON.stringify({ play: !isPlaying }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to toggle playback");
+      if (!track) {
+        setError("No track selected");
+        return;
       }
 
-      // Update track info after toggling playback
-      getCurrentTrack();
+      setError(null);
+
+      if (!isPlaying) {
+        // Get current playback state to get position
+        const playbackResponse = await fetch('/api/spotify/current-track');
+        const playbackState = await playbackResponse.json();
+        console.log('Current playback state:', playbackState); // Debug log
+
+        const position_ms = playbackState.progress_ms;
+        console.log('Resuming from position (ms):', position_ms); // Debug log
+
+        // Starting playback
+        const response = await fetch("/api/spotify/play", {
+          method: "PUT",
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ 
+            deviceId: device.id,
+            trackUri: track.uri,
+            contextUri: playlist ? `spotify:playlist:${playlist.id}` : undefined,
+            position_ms: position_ms || 0
+          }),
+        });
+        const data = await response.json();
+        console.log('Play response:', data);
+        
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to start playback");
+        }
+      } else {
+        // Pausing playback
+        const response = await fetch("/api/spotify/pause", { method: "PUT" });
+        const data = await response.json();
+        console.log('Pause response:', data);
+        
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to pause playback");
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await getCurrentTrack();
+      setIsPlaying(!isPlaying);
     } catch (error) {
       console.error("Failed to toggle playback:", error);
       setError(
         error instanceof Error ? error.message : "Failed to toggle playback"
       );
+      setIsPlaying(false);
     }
   };
 
@@ -215,46 +269,70 @@ export default function VinylPlayer({
     }
   };
 
-  useEffect(() => {
-    const fetchPlaylist = async () => {
-      try {
-        const response = await fetch("/api/spotify/playlist");
-        const data = await response.json();
-
-        if (data.error) {
-          setError(data.error);
-          return;
-        }
-
-        setPlaylist(data.playlist);
-      } catch (error) {
-        console.error("Error fetching playlist:", error);
-        setError("Failed to fetch playlist");
+  const fetchPlaylist = async () => {
+    try {
+      // First check if we're authenticated
+      const authResponse = await fetch("/api/spotify/check-auth");
+      const authData = await authResponse.json();
+      
+      if (!authData.authenticated) {
+        setError('Not authenticated with Spotify');
+        setIsAuthenticated(false);
+        return;
       }
-    };
 
+      const response = await fetch('/api/spotify/playlist');
+      
+      if (response.status === 429) {
+        setError('Rate limit reached. Retrying...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const retryResponse = await fetch('/api/spotify/playlist');
+        if (!retryResponse.ok) {
+          const errorData = await retryResponse.json().catch(() => ({}));
+          throw new Error(
+            `Failed to fetch playlist: ${retryResponse.status} - ${errorData.error || retryResponse.statusText}`
+          );
+        }
+        const data = await retryResponse.json();
+        if (!data.playlist) {
+          throw new Error('No playlist data received');
+        }
+        setPlaylist(data.playlist);
+        setError(null);
+        return;
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(
+          `Failed to fetch playlist: ${response.status} - ${errorData.error || response.statusText}`
+        );
+      }
+
+      const data = await response.json();
+      if (!data.playlist) {
+        throw new Error('No playlist data received');
+      }
+      
+      setPlaylist(data.playlist);
+      setError(null);
+    } catch (error) {
+      console.error('Error fetching playlist:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load playlist');
+      setPlaylist(null);
+      
+      // If we get a 401 Unauthorized, we should prompt for re-authentication
+      if (error instanceof Error && error.message.includes('401')) {
+        setIsAuthenticated(false);
+      }
+    }
+  };
+
+  useEffect(() => {
     if (isAuthenticated) {
       fetchPlaylist();
     }
   }, [isAuthenticated]);
-
-  const startPlaylist = async () => {
-    try {
-      const response = await fetch("/api/spotify/playlist", {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to start playlist");
-      }
-
-      // Wait a bit for Spotify to start playing
-      setTimeout(getCurrentTrack, 500);
-    } catch (error) {
-      console.error("Error starting playlist:", error);
-      setError("Failed to start playlist");
-    }
-  };
 
   useEffect(() => {
     const handlePlaylistEnd = async () => {
@@ -295,10 +373,10 @@ export default function VinylPlayer({
           </h2>
           <p className="text-sky-200/70 mb-4">{playlist.description}</p>
           <button
-            onClick={startPlaylist}
+            onClick={fetchPlaylist}
             className="px-6 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-full transition-colors shadow-lg"
           >
-            Start Listening
+            Refresh Playlist
           </button>
         </div>
       )}
@@ -314,7 +392,7 @@ export default function VinylPlayer({
           <p>{error}</p>
           {error === "Playlist ended" && (
             <button
-              onClick={startPlaylist}
+              onClick={fetchPlaylist}
               className="mt-2 px-4 py-1 bg-blue-600 text-white rounded-full text-sm hover:bg-blue-700 transition-colors"
             >
               Replay Playlist
@@ -623,3 +701,4 @@ function decodeHTMLEntities(text: string) {
   textarea.innerHTML = text;
   return textarea.value;
 }
+
