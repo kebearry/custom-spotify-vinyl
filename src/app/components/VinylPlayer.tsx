@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import { LOGIN_URL } from "../lib/spotify";
 import SongNotes from "./SongNotes";
@@ -46,6 +46,7 @@ export default function VinylPlayer({
 }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [track, setTrack] = useState<Track | null>(initialTrack);
+  const [showPremiumMessage, setShowPremiumMessage] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [device, setDevice] = useState<SpotifyDevice | null>(null);
@@ -55,7 +56,9 @@ export default function VinylPlayer({
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [lastApiCall, setLastApiCall] = useState(0);
   const [transitionMessage, setTransitionMessage] = useState<string | null>(null);
+  const [isPremium, setIsPremium] = useState<boolean>(false);
   const playlistId = '1odn9BcsovHl9YoaOb38t6';
+  const initialCheckDone = useRef(false);
 
   const checkTrackInPlaylist = (
     currentTrack: Track | null,
@@ -67,7 +70,7 @@ export default function VinylPlayer({
     );
   };
 
-  const getCurrentTrack = useCallback(async (): Promise<void> => {
+  const getCurrentTrack = useCallback(async () => {
     try {
       const now = Date.now();
       if (now - lastApiCall < MIN_API_INTERVAL) {
@@ -81,236 +84,157 @@ export default function VinylPlayer({
       }
       
       const data = await response.json();
-      console.log('Current track data:', data); // Debug log
       
-      if (data.error) {
-        setError(data.error);
-        if (isPlaying) {
-          await fetch('/api/spotify/pause', { method: 'POST' });
-          setIsPlaying(false);
-        }
-        return;
+      if (!data.track || !playlist) return;
+
+      // Check if current track is in playlist
+      const trackInPlaylist = playlist.tracks.items.some(
+        (item: PlaylistTrack) => item.track.id === data.track.id
+      );
+
+      // Show premium message if track is not in playlist and user is not premium
+      if (!trackInPlaylist && !isPremium) {
+        setShowPremiumMessage(true);
+        setTimeout(() => setShowPremiumMessage(false), 5000);
+      } else {
+        setShowPremiumMessage(false);
       }
 
-      // If there's a track playing but it's not from our playlist
-      if (data.track && playlist) {
-        const inPlaylist = checkTrackInPlaylist(data.track, playlist.tracks.items);
-        
-        if (!inPlaylist) {
-          // Show transition message
-          setTransitionMessage(`Switching from "${data.track.name}" to playlist...`);
-          console.log('Detected non-playlist track, switching to playlist...');
-          
-          // First, get the current active device
-          const deviceResponse = await fetch('/api/spotify/get-devices');
-          if (!deviceResponse.ok) {
-            throw new Error('Failed to get devices');
-          }
-          const deviceData = await deviceResponse.json();
-          console.log('Device data:', deviceData); // Debug log
-
-          const activeDevice = deviceData.devices?.find((d: SpotifyDevice) => d.is_active);
-          
-          if (!activeDevice) {
-            throw new Error('No active device found');
-          }
-
-          console.log('Using device:', activeDevice); // Debug log
-
-          // Prepare play request payload
-          const playPayload = {
-            deviceId: activeDevice.id,
-            contextUri: `spotify:playlist:${playlistId}`,
-            offset: { position: 0 },
-            position_ms: 0
-          };
-
-          console.log('Play request payload:', playPayload); // Debug log
-
-          // Force switch to our playlist
-          const playResponse = await fetch("/api/spotify/play", {
-            method: "PUT",
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(playPayload),
-          });
-
-          // Log raw response for debugging
-          const rawPlayResponse = await playResponse.text();
-          console.log('Raw play response:', rawPlayResponse);
-
-          if (!playResponse.ok) {
-            // Try to parse the error response
-            let errorData;
-            try {
-              errorData = JSON.parse(rawPlayResponse);
-            } catch {
-              console.error('Failed to parse error response:', rawPlayResponse);
-              throw new Error(`Play request failed with status ${playResponse.status}: ${rawPlayResponse}`);
-            }
-            
-            const errorMessage = errorData.error?.message || errorData.error?.reason || 'Unknown error';
-            console.error("Failed to switch to playlist:", errorMessage);
-            throw new Error(`Failed to switch to playlist: ${errorMessage}`);
-          }
-          
-          // Successfully switched to playlist
-          console.log('Successfully switched to playlist');
-          setIsPlaying(true);
-          
-          // Wait a moment before getting the current track again
-          await new Promise(resolve => setTimeout(resolve, 2000));
-
-          // Clear transition message after successful switch
-          setTimeout(() => {
-            setTransitionMessage(null);
-          }, 3000);
-
-          return getCurrentTrack();
-        }
-      }
-
-      // Handle case where playback has stopped
-      if (!data.track && isPlaying) {
-        setIsPlaying(false);
-        setTrack(null);
-        setError("Playback stopped unexpectedly");
-        return;
-      }
-
-      // Update track and state
-      if (!track || track.id !== data.track?.id || isPlaying !== data.isPlaying) {
+      // Update track state
+      if (!track || track.id !== data.track.id || isPlaying !== data.isPlaying) {
         setTrack(data.track);
         setIsPlaying(data.isPlaying);
         setDevice(data.device);
         setError(null);
       }
+
     } catch (error) {
-      console.error('Error in getCurrentTrack:', error);
+      console.error('Error getting current track:', error);
       if (isPlaying) {
         setIsPlaying(false);
       }
       setError(error instanceof Error ? error.message : 'Failed to get current track');
     }
-  }, [lastApiCall, track, isPlaying, playlist, playlistId]);
+  }, [lastApiCall, track, isPlaying, playlist, isPremium]);
 
-  useEffect(() => {
-    // Check if we have an access token in cookies
-    const checkAuth = async () => {
-      try {
-        // Verify playlist ID exists
-        if (!playlistId) {
-          throw new Error("Playlist ID is not defined");
+  const checkAuth = async () => {
+    try {
+      if (!playlistId) {
+        throw new Error("Playlist ID is not defined");
+      }
+
+      // First check auth and get a fresh token
+      console.log("1. Checking auth...");
+      const authResponse = await fetch("/api/spotify/check-auth");
+      if (!authResponse.ok) {
+        if (authResponse.status === 401) {
+          window.location.href = LOGIN_URL;
+          return;
         }
-        console.log("Using playlist ID:", playlistId);
+        throw new Error(`Auth check failed with status: ${authResponse.status}`);
+      }
 
-        const response = await fetch("/api/spotify/check-auth");
-        if (!response.ok) {
-          throw new Error(`Auth check failed with status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        console.log("Auth check response:", data);
+      const authData = await authResponse.json();
+      if (!authData.authenticated) {
+        window.location.href = LOGIN_URL;
+        return;
+      }
 
-        if (data.authenticated) {
-          setIsAuthenticated(true);
-          
-          // First, verify premium status
-          const accountResponse = await fetch('/api/spotify/check-account');
-          const accountData = await accountResponse.json();
-          
-          if (!accountData.isPremium) {
-            throw new Error("Spotify Premium is required for playback control");
-          }
-          
-          // First, verify the playlist exists and is accessible
-          const playlistResponse = await fetch(`/api/spotify/check-playlist?playlistId=${playlistId}`);
-          if (!playlistResponse.ok) {
-            throw new Error("Cannot access playlist. Please check the playlist ID and permissions.");
-          }
-          
-          // Then get devices
-          const deviceResponse = await fetch('/api/spotify/get-devices');
-          if (!deviceResponse.ok) {
-            throw new Error(`Device check failed with status: ${deviceResponse.status}`);
-          }
-          
-          const deviceData = await deviceResponse.json();
-          console.log("Device data:", deviceData);
-          
-          if (deviceData.devices?.length) {
-            // Find active device or use first available
-            const activeDevice = deviceData.devices.find((d: SpotifyDevice) => d.is_active);
-            
-            if (!activeDevice) {
-              throw new Error("No active Spotify device found. Please start playing any track in Spotify first.");
-            }
-            
-            setDevice(activeDevice);
-            console.log("Using device:", activeDevice);
-            
-            // Wait a short moment before trying to play
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // Try to start playback
-            const playPayload = {
-              deviceId: activeDevice.id,
+      setIsAuthenticated(true);
+      console.log("2. Authentication successful");
+
+      // Wait a moment before making additional requests
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Check premium status
+      console.log("3. Checking premium status...");
+      const accountResponse = await fetch('/api/spotify/check-account');
+      if (!accountResponse.ok) {
+        throw new Error(`Account check failed: ${accountResponse.status}`);
+      }
+      
+      const accountData = await accountResponse.json();
+      setIsPremium(accountData.isPremium);
+      console.log("4. Premium status:", accountData.isPremium);
+
+      // Get playlist first
+      console.log("5. Fetching playlist...");
+      const playlistResponse = await fetch(`/api/spotify/check-playlist?playlistId=${playlistId}`);
+      if (!playlistResponse.ok) {
+        throw new Error(`Failed to fetch playlist: ${playlistResponse.status}`);
+      }
+
+      const playlistData = await playlistResponse.json();
+      setPlaylist(playlistData);
+      console.log("6. Playlist fetched successfully");
+
+      // Then get current track
+      console.log("7. Getting current track...");
+      const trackResponse = await fetch('/api/spotify/current-track');
+      if (!trackResponse.ok) {
+        throw new Error(`Failed to fetch current track: ${trackResponse.status}`);
+      }
+
+      const trackData = await trackResponse.json();
+      console.log("8. Current track fetched successfully");
+
+      if (trackData.track && playlistData.tracks.items) {
+        const trackInPlaylist = playlistData.tracks.items.some(
+          (item: PlaylistTrack) => item.track.id === trackData.track.id
+        );
+
+        setTrack(trackData.track);
+        setIsPlaying(trackData.isPlaying);
+        setDevice(trackData.device);
+
+        console.log("9. Track in playlist check:", { 
+          track: trackData.track.name, 
+          inPlaylist: trackInPlaylist 
+        });
+
+        if (!trackInPlaylist && accountData.isPremium) {
+          console.log("10. Attempting to switch to playlist...");
+          setTransitionMessage(`Switching from "${trackData.track.name}" to playlist...`);
+
+          const playResponse = await fetch("/api/spotify/play", {
+            method: "PUT",
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 
+              deviceId: trackData.device?.id,
               contextUri: `spotify:playlist:${playlistId}`,
               offset: { position: 0 },
               position_ms: 0
-            };
+            }),
+          });
 
-            console.log("Attempting to play with payload:", playPayload);
-
-            const playResponse = await fetch("/api/spotify/play", {
-              method: "PUT",
-              headers: {
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify(playPayload),
-            });
-            
-            const rawPlayResponse = await playResponse.text();
-            console.log("Raw play response:", rawPlayResponse);
-            
-            if (!playResponse.ok) {
-              let errorMessage = "Failed to start playlist";
-              try {
-                const errorData = rawPlayResponse ? JSON.parse(rawPlayResponse) : {};
-                if (errorData.error?.reason === 'PREMIUM_REQUIRED') {
-                  errorMessage = "Spotify Premium is required for playback control";
-                  console.warn("Premium required warning:", errorMessage);
-                  setError(errorMessage);
-                  return;
-                }
-                errorMessage = errorData.error?.message || errorMessage;
-                console.error("Playback error details:", errorData);
-              } catch {
-                console.error("Failed to parse error response:", rawPlayResponse);
-              }
-              throw new Error(errorMessage);
-            }
-            
-            console.log("Successfully started playback");
-            setIsPlaying(true);
-            getCurrentTrack();
+          if (!playResponse.ok) {
+            console.error("Play response error:", await playResponse.text());
           } else {
-            throw new Error("No Spotify devices found. Please open Spotify on any device.");
+            console.log("11. Successfully switched to playlist");
+            setTimeout(() => setTransitionMessage(null), 3000);
           }
         }
-      } catch (error) {
-        console.error("Error in auth check:", error);
-        setError(error instanceof Error ? error.message : "Failed to initialize playback");
       }
-    };
 
+    } catch (error) {
+      console.error("Error in auth check:", error);
+      setError(error instanceof Error ? error.message : "Failed to initialize playback");
+    }
+  };
+
+  useEffect(() => {
     checkAuth();
-    const interval = setInterval(getCurrentTrack, 10000);
-    return () => clearInterval(interval);
-  }, [getCurrentTrack, playlistId, setError, setIsAuthenticated, setDevice, setIsPlaying]);
+  }, []); // Empty dependency array to run only once on mount
 
   const togglePlayback = async () => {
+    if (!isPremium && track && playlist && !playlist.tracks.items.some(item => item.track.id === track.id)) {
+      setShowPremiumMessage(true);
+      setTimeout(() => setShowPremiumMessage(false), 5000);
+      return;
+    }
+
     try {
       if (!device) {
         setError("Please open Spotify on any device first");
@@ -581,7 +505,14 @@ export default function VinylPlayer({
     }
   };
 
-  // If no device is active, show instructions overlay
+  // Reset the switch completion when the component unmounts
+  useEffect(() => {
+    return () => {
+      initialCheckDone.current = false;
+    };
+  }, []);
+
+  // Device check conditional return
   if (!device) {
     return (
       <div className="flex flex-col items-center justify-center p-8 max-w-md mx-auto">
@@ -725,6 +656,7 @@ export default function VinylPlayer({
     );
   }
 
+  // Auth check conditional return
   if (!isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center p-8 max-w-md mx-auto">
@@ -1089,17 +1021,63 @@ export default function VinylPlayer({
       )}
 
       {/* Transition Message */}
-      {transitionMessage && (
+      {(showPremiumMessage || transitionMessage) && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
           <div className="bg-zinc-900 border border-zinc-800 text-white px-8 py-6 rounded-xl shadow-2xl max-w-md mx-4 animate-fade-in">
             <div className="flex flex-col items-center gap-4 text-center">
-              <div className="w-8 h-8 border-t-2 border-r-2 border-emerald-500 rounded-full animate-spin" />
-              <div>
-                <p className="text-zinc-400 mb-2">Currently playing:</p>
-                <p className="text-lg font-medium mb-3 text-white">{track?.name}</p>
-                <p className="text-zinc-400 mb-2">Switching to:</p>
-                <p className="text-lg font-medium text-emerald-400">Playlist: {playlist?.name || 'Custom Playlist'}</p>
-              </div>
+              {showPremiumMessage ? (
+                <>
+                  <div className="text-amber-500 mb-2">
+                    <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold mb-2">Spotify Premium Required</h3>
+                    <p className="text-zinc-400 mb-4">
+                      Playback control requires a Spotify Premium account. 
+                      {!checkTrackInPlaylist(track, playlist?.tracks.items || []) && 
+                        " Please manually switch to the playlist or upgrade your account."}
+                    </p>
+                    <div className="flex flex-col gap-3">
+                      {!checkTrackInPlaylist(track, playlist?.tracks.items || []) && (
+                        <a 
+                          href={`https://open.spotify.com/playlist/${playlistId}`}
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="inline-block bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full transition-all duration-200 flex items-center justify-center gap-2"
+                        >
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                          </svg>
+                          Open Playlist in Spotify
+                        </a>
+                      )}
+                      <a 
+                        href="https://www.spotify.com/premium/" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-block bg-[#1DB954] hover:bg-[#1ed760] text-white font-bold py-2 px-4 rounded-full transition-all duration-200 flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.5 14.5L12 13l-4.5 3.5 1.5-5L4.5 8h5l2.5-5 2.5 5h5l-4.5 3.5 1.5 5z"/>
+                        </svg>
+                        Get Spotify Premium
+                      </a>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-8 h-8 border-t-2 border-r-2 border-emerald-500 rounded-full animate-spin" />
+                  <div>
+                    <p className="text-zinc-400 mb-2">Currently playing:</p>
+                    <p className="text-lg font-medium mb-3 text-white">{track?.name}</p>
+                    <p className="text-zinc-400 mb-2">Switching to:</p>
+                    <p className="text-lg font-medium text-emerald-400">Playlist: {playlist?.name || 'Custom Playlist'}</p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
