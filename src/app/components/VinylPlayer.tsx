@@ -54,6 +54,7 @@ export default function VinylPlayer({
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [lastApiCall, setLastApiCall] = useState(0);
+  const [transitionMessage, setTransitionMessage] = useState<string | null>(null);
   const playlistId = '1odn9BcsovHl9YoaOb38t6';
 
   const checkTrackInPlaylist = (
@@ -96,6 +97,8 @@ export default function VinylPlayer({
         const inPlaylist = checkTrackInPlaylist(data.track, playlist.tracks.items);
         
         if (!inPlaylist) {
+          // Show transition message
+          setTransitionMessage(`Switching from "${data.track.name}" to playlist...`);
           console.log('Detected non-playlist track, switching to playlist...');
           
           // First, get the current active device
@@ -158,6 +161,12 @@ export default function VinylPlayer({
           
           // Wait a moment before getting the current track again
           await new Promise(resolve => setTimeout(resolve, 2000));
+
+          // Clear transition message after successful switch
+          setTimeout(() => {
+            setTransitionMessage(null);
+          }, 3000);
+
           return getCurrentTrack();
         }
       }
@@ -1076,6 +1085,23 @@ export default function VinylPlayer({
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Transition Message */}
+      {transitionMessage && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
+          <div className="bg-zinc-900 border border-zinc-800 text-white px-8 py-6 rounded-xl shadow-2xl max-w-md mx-4 animate-fade-in">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="w-8 h-8 border-t-2 border-r-2 border-emerald-500 rounded-full animate-spin" />
+              <div>
+                <p className="text-zinc-400 mb-2">Currently playing:</p>
+                <p className="text-lg font-medium mb-3 text-white">{track?.name}</p>
+                <p className="text-zinc-400 mb-2">Switching to:</p>
+                <p className="text-lg font-medium text-emerald-400">Playlist: {playlist?.name || 'Custom Playlist'}</p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
