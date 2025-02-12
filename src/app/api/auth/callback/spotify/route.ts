@@ -10,11 +10,13 @@ export async function GET(request: Request) {
   }
   
   try {
+    // Make sure this exactly matches what's in your Spotify Dashboard
     const redirectUri = process.env.NODE_ENV === 'production'
-      ? 'https://custom-spotify-vinyl-843p.vercel.app'
-      : 'http://localhost:3000';
+      ? 'https://custom-spotify-vinyl-843p.vercel.app/api/auth/callback/spotify'
+      : 'http://localhost:3000/api/auth/callback/spotify';
 
-    // Create a new instance with all credentials for server-side operations
+    console.log('Using redirect URI:', redirectUri); // Debug log
+
     const spotifyApi = new SpotifyWebApi({
       clientId: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID,
       clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
@@ -30,8 +32,12 @@ export async function GET(request: Request) {
       environment: process.env.NODE_ENV
     });
 
-    // Create response with redirect
-    const response = NextResponse.redirect(redirectUri);
+    // Create response with redirect to home
+    const baseUrl = process.env.NODE_ENV === 'production'
+      ? 'https://custom-spotify-vinyl-843p.vercel.app'
+      : 'http://localhost:3000';
+
+    const response = NextResponse.redirect(baseUrl);
 
     // Store tokens in cookies with proper options
     response.cookies.set('spotify_access_token', access_token, {
@@ -40,9 +46,6 @@ export async function GET(request: Request) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
-      domain: process.env.NODE_ENV === 'production' 
-        ? 'custom-spotify-vinyl-843p.vercel.app'
-        : 'localhost'
     });
 
     response.cookies.set('spotify_refresh_token', refresh_token, {
@@ -51,17 +54,9 @@ export async function GET(request: Request) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
-      domain: process.env.NODE_ENV === 'production' 
-        ? 'custom-spotify-vinyl-843p.vercel.app'
-        : 'localhost'
     });
 
-    console.log('Set cookies with options:', {
-      secure: process.env.NODE_ENV === 'production',
-      domain: process.env.NODE_ENV === 'production' 
-        ? 'custom-spotify-vinyl-843p.vercel.app'
-        : 'localhost'
-    });
+    console.log('Set cookies and redirecting to:', baseUrl);
 
     return response;
   } catch (error) {

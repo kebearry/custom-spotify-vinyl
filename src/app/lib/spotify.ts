@@ -10,12 +10,9 @@ if (!process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI) {
   );
 }
 
-const defaultRedirectUri = process.env.NODE_ENV === 'production'
-  ? 'https://custom-spotify-vinyl-843p.vercel.app'
-  : 'http://localhost:3000';
-// Ensure redirect URI has protocol
-// Use environment variable or fall back to default
-const redirectUri = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI || defaultRedirectUri;
+const redirectUri = process.env.NODE_ENV === 'production'
+  ? 'https://custom-spotify-vinyl-843p.vercel.app/api/auth/callback/spotify'
+  : 'http://localhost:3000/api/auth/callback/spotify';
 
 const scopes = [
   "user-read-playback-state",
