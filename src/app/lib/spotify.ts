@@ -11,7 +11,7 @@ if (!process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI) {
 }
 
 const redirectUri = process.env.NODE_ENV === 'production'
-  ? 'https://custom-spotify-vinyl-843p.vercel.app/api/auth/callback/spotify'
+  ? 'https://custom-spotify-vinyl.vercel.app/api/auth/callback/spotify'
   : 'http://localhost:3000/api/auth/callback/spotify';
 
 const scopes = [

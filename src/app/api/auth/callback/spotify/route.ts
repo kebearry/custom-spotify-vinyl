@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   try {
     // Make sure this exactly matches what's in your Spotify Dashboard
     const redirectUri = process.env.NODE_ENV === 'production'
-      ? 'https://custom-spotify-vinyl-843p.vercel.app/api/auth/callback/spotify'
+      ? 'https://custom-spotify-vinyl.vercel.app/api/auth/callback/spotify'
       : 'http://localhost:3000/api/auth/callback/spotify';
 
     console.log('Using redirect URI:', redirectUri); // Debug log
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
     // Create response with redirect to home
     const baseUrl = process.env.NODE_ENV === 'production'
-      ? 'https://custom-spotify-vinyl-843p.vercel.app'
+      ? 'https://custom-spotify-vinyl.vercel.app'
       : 'http://localhost:3000';
 
     const response = NextResponse.redirect(baseUrl);
