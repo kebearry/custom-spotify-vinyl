@@ -1,10 +1,18 @@
 import { NextResponse } from 'next/server';
 import { MongoClient, ObjectId } from 'mongodb';
 
-const uri = process.env.MONGODB_URI!;
-const client = new MongoClient(uri);
+// Move client creation into a function
+async function getMongoClient() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error('Missing MONGODB_URI environment variable');
+  }
+  return new MongoClient(uri);
+}
 
 export async function POST(request: Request) {
+  const client = await getMongoClient();
+  
   try {
     const { noteId, emoji, userId } = await request.json();
 
