@@ -350,15 +350,207 @@ export default function VinylPlayer({
     handlePlaylistEnd();
   }, [track, isPlaying, playlist, isTransitioning, getCurrentTrack]);
 
+  const checkForDevices = async () => {
+    try {
+      setError(null);
+
+      // First check if we're authenticated
+      const authResponse = await fetch("/api/spotify/check-auth");
+      const authData = await authResponse.json();
+      
+      if (!authData.authenticated) {
+        setIsAuthenticated(false);
+        return false;
+      }
+
+      // Then check for devices
+      const response = await fetch('/api/spotify/devices');
+      const data = await response.json();
+      
+      if (!data.devices || data.devices.length === 0) {
+        setError("No active Spotify devices found. Please open Spotify and play a song briefly.");
+        return false;
+      }
+      
+      if (!device && data.devices.length > 0) {
+        setDevice(data.devices[0]);
+      }
+      
+      await getCurrentTrack();
+      return true;
+    } catch (error) {
+      console.error('Error checking devices:', error);
+      setError("Failed to check for Spotify devices. Please try again.");
+      return false;
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/spotify/logout', { method: 'POST' });
+      setIsAuthenticated(false);
+      setDevice(null);
+      setTrack(null);
+      setIsPlaying(false);
+      // Optionally redirect to home or refresh the page
+      window.location.reload();
+    } catch (error) {
+      console.error('Logout error:', error);
+      setError('Failed to logout. Please try again.');
+    }
+  };
+
+  // If no device is active, show instructions overlay
+  if (!device) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 max-w-md mx-auto">
+        <div className="w-full bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl shadow-xl border border-slate-700">
+          {/* Header */}
+          <div className="p-6 border-b border-slate-700">
+            <h2 className="text-2xl font-bold text-white mb-2">
+              Connect to Spotify
+            </h2>
+            <p className="text-slate-400">
+              Follow these steps to start using the vinyl player
+            </p>
+          </div>
+
+          {/* Instructions */}
+          <div className="p-6 space-y-6">
+            <div className="space-y-4">
+              {/* Step 1 */}
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold">
+                  1
+                </div>
+                <div>
+                  <h3 className="text-white font-medium mb-2">Connect your Spotify account</h3>
+                  <div className="mb-3">
+                    <a
+                      href={LOGIN_URL}
+                      className="inline-flex items-center gap-2 bg-[#1DB954] hover:bg-[#1ed760] 
+                               text-white font-bold py-3 px-6 rounded-full 
+                               transition-all duration-200 transform hover:scale-105
+                               shadow-lg hover:shadow-[#1DB954]/30"
+                    >
+                      <svg 
+                        className="w-5 h-5" 
+                        fill="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                      </svg>
+                      Connect with Spotify
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold">
+                  2
+                </div>
+                <div>
+                  <h3 className="text-white font-medium mb-2">Open Spotify on any device</h3>
+                  <ul className="space-y-1 text-slate-400">
+                    <li className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+                      Spotify Desktop App
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+                      Spotify Mobile App
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+                      Spotify Web Player
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold">
+                  3
+                </div>
+                <div>
+                  <h3 className="text-white font-medium">Play any song briefly</h3>
+                  <p className="text-slate-400 mt-1">This will activate your device</p>
+                </div>
+              </div>
+
+              {/* Step 4 */}
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold">
+                  4
+                </div>
+                <div>
+                  <h3 className="text-white font-medium">Check connection</h3>
+                  <p className="text-slate-400 mt-1">Click the button below to connect</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Button */}
+            <button
+              onClick={checkForDevices}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium 
+                       py-3 px-6 rounded-lg transition-colors duration-200 
+                       flex items-center justify-center gap-2 shadow-lg"
+            >
+              <span>Check for Spotify Devices</span>
+            </button>
+
+            {/* Error Message */}
+            {error && (
+              <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+                <p className="text-red-400 text-sm flex items-center gap-2">
+                  <svg 
+                    className="w-4 h-4" 
+                    fill="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                  </svg>
+                  {error}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 border-t border-slate-700 bg-slate-900/50">
+            <p className="text-slate-400 text-sm text-center">
+              Need help? Make sure you&apos;re logged into the correct Spotify account
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
-      <div className="flex justify-center p-4">
-        <a
-          href={LOGIN_URL}
-          className="px-6 py-2 text-sky-100 bg-sky-600 rounded-full hover:bg-sky-500 transition-colors duration-200 shadow-md"
-        >
-          Connect to Spotify
-        </a>
+      <div className="flex flex-col items-center justify-center p-8 max-w-md mx-auto">
+        <div className="w-full bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl shadow-xl border border-slate-700">
+          <div className="p-6 text-center">
+            <h2 className="text-2xl font-bold text-white mb-4">
+              Connect Your Spotify Account
+            </h2>
+            <p className="text-slate-400 mb-6">
+              To use the vinyl player, you&apos;ll need to connect your Spotify account first
+            </p>
+            <a
+              href={LOGIN_URL}
+              className="inline-block bg-blue-500 hover:bg-blue-600 text-white font-medium 
+                       py-3 px-6 rounded-lg transition-colors duration-200 shadow-lg"
+            >
+              Connect to Spotify
+            </a>
+          </div>
+        </div>
       </div>
     );
   }
@@ -412,7 +604,7 @@ export default function VinylPlayer({
           <div
             className="absolute inset-0 rounded-lg opacity-20"
             style={{
-              backgroundImage: `url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.5'/%3E%3C/svg%3E")`,
+              backgroundImage: `url("data:image/svg+xml,%3Csvg width=&apos;100&apos; height=&apos;100&apos; viewBox=&apos;0 0 100 100&apos; xmlns=&apos;http://www.w3.org/2000/svg&apos;%3E%3Cfilter id=&apos;noise&apos;%3E%3CfeTurbulence type=&apos;fractalNoise&apos; baseFrequency=&apos;0.8&apos; numOctaves=&apos;4&apos; stitchTiles=&apos;stitch&apos;/%3E%3C/filter%3E%3Crect width=&apos;100&apos; height=&apos;100&apos; filter=&apos;url(%23noise)&apos; opacity=&apos;0.5&apos;/%3E%3C/svg%3E")`,
             }}
           />
 
@@ -487,15 +679,24 @@ export default function VinylPlayer({
 
       {/* New Controls Section with blue/silver theme */}
       <div className="w-[500px] bg-gradient-to-br from-slate-900/95 to-slate-950/95 rounded-lg backdrop-blur-sm border border-sky-400/20 shadow-lg shadow-sky-500/5">
-        {/* Top Section - Device Info */}
+        {/* Top Section - Device Info with Logout */}
         {device && (
           <div className="px-6 py-3 border-b border-sky-500/20 flex items-center justify-between bg-slate-900/50">
             <div className="flex items-center gap-2 text-sm text-sky-200/80">
               <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse shadow-lg shadow-sky-400/50" />
               <span>{device.name}</span>
             </div>
-            <div className="text-xs text-sky-300/50 font-medium">
-              {device.type}
+            <div className="flex items-center gap-4">
+              <div className="text-xs text-sky-300/50 font-medium">
+                {device.type}
+              </div>
+              <button
+                onClick={handleLogout}
+                className="text-xs px-3 py-1 bg-red-500/10 hover:bg-red-500/20 
+                         text-red-400 rounded-full transition-colors duration-200"
+              >
+                Logout
+              </button>
             </div>
           </div>
         )}
