@@ -4,6 +4,43 @@ import SpotifyWebApi from 'spotify-web-api-node';
 
 const PLAYLIST_ID = process.env.SPOTIFY_PLAYLIST_ID || undefined;
 
+interface SpotifyError {
+  statusCode: number;
+  headers?: { [key: string]: string };
+  message?: string;
+  body?: {
+    error?: {
+      status: number;
+      message: string;
+    }
+  }
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3
+): Promise<T> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error: unknown) {
+      const spotifyError = error as SpotifyError;
+      if (spotifyError.statusCode === 429) {
+        const retryAfter = parseInt(spotifyError.headers?.['retry-after'] || '1');
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+        continue;
+      }
+      
+      // On last retry, throw the error
+      if (i === maxRetries - 1) throw error;
+      
+      // Otherwise wait with exponential backoff
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    }
+  }
+  throw new Error('Max retries reached');
+}
+
 export async function GET(request: Request) {
   try {
     const cookieStore = await cookies();
@@ -30,10 +67,10 @@ export async function GET(request: Request) {
     spotifyApi.setAccessToken(accessToken);
 
     try {
-      // First try to get the playlist metadata
-      const metaData = await spotifyApi.getPlaylist(playlistId, { 
-        fields: 'id,name,public'
-      });
+      // First try to get the playlist metadata with retry
+      const metaData = await withRetry(() => 
+        spotifyApi.getPlaylist(playlistId, { fields: 'id,name,public' })
+      );
       
       console.log('Playlist metadata:', {
         id: metaData.body.id,
@@ -41,21 +78,22 @@ export async function GET(request: Request) {
         public: metaData.body.public
       });
 
-      // If we can get metadata, we should be able to get the full playlist
-      const data = await spotifyApi.getPlaylist(playlistId);
+      // If we can get metadata, get the full playlist with retry
+      const data = await withRetry(() => 
+        spotifyApi.getPlaylist(playlistId)
+      );
+
+      // Check if the user has an active premium subscription
+      const me = await spotifyApi.getMe();
+      if (me.body.product !== 'premium') {
+        return NextResponse.json({ 
+          error: 'Spotify Premium required',
+          isPremiumError: true 
+        }, { status: 403 });
+      }
+
       return NextResponse.json(data.body);
     } catch (spotifyError: unknown) {
-      interface SpotifyError {
-        statusCode: number;
-        message: string;
-        body: {
-          error?: {
-            status: number;
-            message: string;
-          }
-        }
-      }
-      
       const error = spotifyError as SpotifyError;
       console.error('Spotify API error:', {
         status: error.statusCode,
@@ -63,35 +101,29 @@ export async function GET(request: Request) {
         body: error.body
       });
 
-      if (error.statusCode === 403) {
-        // Try one more time with minimal fields
-        try {
-          const publicData = await spotifyApi.getPlaylist(playlistId, { 
-            fields: 'id,name,tracks.items(track(id,name,artists,album))'
-          });
-          console.log('Successfully fetched public data');
-          return NextResponse.json(publicData.body);
-        } catch (publicError: unknown) {
-          const error = publicError as SpotifyError;
-          console.error('Failed to fetch public data:', error);
-          return NextResponse.json({
-            error: 'Unable to access playlist',
-            details: {
-              message: error.message,
-              statusCode: error.statusCode,
-              isPublic: true
-            }
-          }, { status: 403 });
-        }
+      // If it's a premium-related error, handle it specifically
+      if (error.statusCode === 403 && error.message?.includes('premium')) {
+        return NextResponse.json({ 
+          error: 'Spotify Premium required',
+          isPremiumError: true 
+        }, { status: 403 });
       }
 
-      return NextResponse.json({
-        error: 'Failed to fetch playlist',
-        details: {
-          message: error.message,
-          statusCode: error.statusCode
-        }
-      }, { status: error.statusCode || 500 });
+      // For other errors, try the fallback approach
+      try {
+        const publicData = await spotifyApi.getPlaylist(playlistId, { 
+          fields: 'id,name,tracks.items(track(id,name,artists,album))'
+        });
+        console.log('Successfully fetched public data');
+        return NextResponse.json(publicData.body);
+      } catch (publicError: unknown) {
+        const error = publicError as SpotifyError;
+        console.error('Failed to fetch public data:', error);
+        return NextResponse.json({
+          error: 'Unable to access playlist',
+          details: error.message
+        }, { status: error.statusCode || 500 });
+      }
     }
   } catch (error) {
     console.error('General error:', error);
