@@ -46,7 +46,6 @@ export default function VinylPlayer({
 }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [track, setTrack] = useState<Track | null>(initialTrack);
-  const [showPremiumMessage, setShowPremiumMessage] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [device, setDevice] = useState<SpotifyDevice | null>(null);
@@ -56,20 +55,11 @@ export default function VinylPlayer({
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [lastApiCall, setLastApiCall] = useState(0);
   const [transitionMessage, setTransitionMessage] = useState<string | null>(null);
-  const [isPremium, setIsPremium] = useState<boolean>(false);
+  const [isPremium, setIsPremium] = useState<boolean>(true);
   const [isLiked, setIsLiked] = useState(false);
+  const [isPremiumChecked, setIsPremiumChecked] = useState<boolean>(false);
   const playlistId = '1odn9BcsovHl9YoaOb38t6';
   const initialCheckDone = useRef(false);
-
-  const checkTrackInPlaylist = (
-    currentTrack: Track | null,
-    playlistTracks: PlaylistTrack[]
-  ) => {
-    if (!currentTrack || !playlistTracks) return false;
-    return playlistTracks.some(
-      (item) => item.track.id === currentTrack.id
-    );
-  };
 
   const getCurrentTrack = useCallback(async () => {
     try {
@@ -126,15 +116,14 @@ export default function VinylPlayer({
 
           if (!playResponse.ok) {
             console.error("Failed to switch to playlist:", await playResponse.text());
-            setShowPremiumMessage(true);
-            setTimeout(() => setShowPremiumMessage(false), 5000);
+            setTimeout(() => setTransitionMessage(null), 3000);
           } else {
             setTimeout(() => setTransitionMessage(null), 3000);
           }
         } else if (!trackInPlaylist && !isPremium) {
-          // Show premium message for non-premium users
-          setShowPremiumMessage(true);
-          setTimeout(() => setShowPremiumMessage(false), 5000);
+          // Show manual switch message for non-premium users
+          setTransitionMessage(`Switching from "${data.track.name}" to playlist...`);
+          setTimeout(() => setTransitionMessage(null), 3000);
         }
       }
 
@@ -271,23 +260,20 @@ export default function VinylPlayer({
           } catch (error) {
             console.error("Failed to switch to playlist:", error);
             // Show manual switch message if automatic switch fails
-            setShowPremiumMessage(true);
-            setTimeout(() => setShowPremiumMessage(false), 5000);
+            setTimeout(() => setTransitionMessage(null), 3000);
           }
         } else {
           console.log("Already playing from the correct playlist");
         }
       } else if (!trackInPlaylist) {
         // Non-premium user or no active device - show manual switch message
-        setShowPremiumMessage(true);
-        setTimeout(() => setShowPremiumMessage(false), 5000);
+        setTimeout(() => setTransitionMessage(null), 3000);
       }
 
     } catch (error) {
       console.error("Error in auth check:", error);
       setError(error instanceof Error ? error.message : "Failed to initialize playback");
-      setShowPremiumMessage(true);
-      setTimeout(() => setShowPremiumMessage(false), 5000);
+      setTimeout(() => setTransitionMessage(null), 3000);
     }
   };
 
@@ -296,12 +282,6 @@ export default function VinylPlayer({
   }, []); // Empty dependency array to run only once on mount
 
   const togglePlayback = async () => {
-    if (!isPremium && track && playlist && !playlist.tracks.items.some(item => item.track.id === track.id)) {
-      setShowPremiumMessage(true);
-      setTimeout(() => setShowPremiumMessage(false), 5000);
-      return;
-    }
-
     try {
       if (!device) {
         setError("Please open Spotify on any device first");
@@ -680,6 +660,36 @@ export default function VinylPlayer({
     }
   }, [track]);
 
+  // Modify the useEffect for premium check
+  useEffect(() => {
+    const checkPremiumStatus = async () => {
+      try {
+        console.log('Checking premium status...');
+        const response = await fetch('/api/spotify/me');
+        const data = await response.json();
+        console.log('Premium check response:', data);
+        const isPremiumUser = data.product === 'premium';
+        console.log('Is Premium User:', isPremiumUser);
+        setIsPremium(isPremiumUser);
+      } catch (error) {
+        console.error('Error checking premium status:', error);
+        setIsPremium(false);
+      } finally {
+        setIsPremiumChecked(true);
+        console.log('Premium check complete');
+      }
+    };
+
+    if (isAuthenticated) {
+      checkPremiumStatus();
+    }
+  }, [isAuthenticated]);
+
+  // Add debug logging for state changes
+  useEffect(() => {
+    console.log('State update - isPremium:', isPremium, 'isPremiumChecked:', isPremiumChecked);
+  }, [isPremium, isPremiumChecked]);
+
   // Device check conditional return
   if (!device) {
     return (
@@ -730,7 +740,7 @@ export default function VinylPlayer({
                           fill="currentColor" 
                           viewBox="0 0 24 24"
                         >
-                          <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                          <path d="M12 0C5.4 0 0 5.4 0 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.5 14.5L12 13l-4.5 3.5 1.5-5L4.5 8h5l2.5-5 2.5 5h5l-4.5 3.5 1.5 5z"/>
                         </svg>
                         Connect with Spotify
                       </a>
@@ -966,25 +976,25 @@ export default function VinylPlayer({
           {/* Middle Section - Track Info */}
           {track && (
             <div className="px-6 py-4 text-center border-b border-sky-500/20 bg-gradient-to-b from-slate-900/50 to-transparent">
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex items-center justify-center gap-3">
                 <h2 className="font-semibold text-lg text-sky-100">
                   {track.name}
                 </h2>
-                {/* Like Button */}
+                {/* Like Button - Increased size */}
                 <button
                   onClick={toggleSaved}
-                  className={`p-2 rounded-full transition-all duration-200 hover:scale-110 ${
+                  className={`p-3 rounded-full transition-all duration-200 hover:scale-110 ${
                     isLiked 
                       ? 'text-red-500 hover:text-red-600' 
                       : 'text-sky-400/70 hover:text-red-500'
                   }`}
                 >
                   {isLiked ? (
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
                     </svg>
                   ) : (
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/>
                     </svg>
                   )}
@@ -1203,63 +1213,49 @@ export default function VinylPlayer({
       </div>
 
       {/* Transition Message */}
-      {(showPremiumMessage || transitionMessage) && (
+      {(transitionMessage) && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
           <div className="bg-zinc-900 border border-zinc-800 text-white px-8 py-6 rounded-xl shadow-2xl max-w-md mx-4 animate-fade-in">
             <div className="flex flex-col items-center gap-4 text-center">
-              {showPremiumMessage ? (
-                <>
-                  <div className="text-amber-500 mb-2">
-                    <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                    </svg>
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-semibold mb-2">Spotify Premium Required</h3>
-                    <p className="text-zinc-400 mb-4">
-                      Playback control requires a Spotify Premium account. 
-                      {!checkTrackInPlaylist(track, playlist?.tracks.items || []) && 
-                        " Please manually switch to the playlist or upgrade your account."}
-                    </p>
-                    <div className="flex flex-col gap-3">
-                      {!checkTrackInPlaylist(track, playlist?.tracks.items || []) && (
-                        <a 
-                          href={`https://open.spotify.com/playlist/${playlistId}`}
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="inline-block bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full transition-all duration-200 flex items-center justify-center gap-2"
-                        >
-                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 0C5.4 0 0 5.4 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
-                          </svg>
-                          Open Playlist in Spotify
-                        </a>
-                      )}
-                      <a 
-                        href="https://www.spotify.com/premium/" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="inline-block bg-[#1DB954] hover:bg-[#1ed760] text-white font-bold py-2 px-4 rounded-full transition-all duration-200 flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.5 14.5L12 13l-4.5 3.5 1.5-5L4.5 8h5l2.5-5 2.5 5h5l-4.5 3.5 1.5 5z"/>
-                        </svg>
-                        Get Spotify Premium
-                      </a>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="w-8 h-8 border-t-2 border-r-2 border-emerald-500 rounded-full animate-spin" />
-                  <div>
-                    <p className="text-zinc-400 mb-2">Currently playing:</p>
-                    <p className="text-lg font-medium mb-3 text-white">{track?.name}</p>
-                    <p className="text-zinc-400 mb-2">Switching to:</p>
-                    <p className="text-lg font-medium text-emerald-400">Playlist: {playlist?.name || 'Custom Playlist'}</p>
-                  </div>
-                </>
-              )}
+              <div className="w-8 h-8 border-t-2 border-r-2 border-emerald-500 rounded-full animate-spin" />
+              <div>
+                <p className="text-zinc-400 mb-2">Currently playing:</p>
+                <p className="text-lg font-medium mb-3 text-white">{track?.name}</p>
+                <p className="text-zinc-400 mb-2">Switching to:</p>
+                <p className="text-lg font-medium text-emerald-400">Playlist: {playlist?.name || 'Custom Playlist'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Premium Status Message */}
+      {isAuthenticated && isPremiumChecked && isPremium === false && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
+          <div className="bg-slate-900 p-6 rounded-lg shadow-xl border border-sky-500/20 max-w-md mx-4">
+            <h3 className="text-xl font-semibold text-sky-100 mb-2">
+              Spotify Premium Required
+            </h3>
+            <p className="text-sky-200/70">
+              This feature requires a Spotify Premium subscription to work.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Checking Premium Status */}
+      {isAuthenticated && !isPremiumChecked && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
+          <div className="bg-slate-900 p-6 rounded-lg shadow-xl border border-sky-500/20 max-w-md mx-4">
+            <div className="text-center">
+              <h3 className="text-xl font-semibold text-sky-100 mb-2">
+                Checking Subscription Status
+              </h3>
+              <div className="flex justify-center gap-1">
+                <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+                <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+              </div>
             </div>
           </div>
         </div>
