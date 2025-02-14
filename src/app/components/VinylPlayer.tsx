@@ -318,11 +318,7 @@ export default function VinylPlayer({
         // Get current playback state to get position
         const playbackResponse = await fetch('/api/spotify/current-track');
         const playbackState = await playbackResponse.json();
-        console.log('Current playback state:', playbackState); // Debug log
-
-        const position_ms = playbackState.progress_ms;
-        console.log('Resuming from position (ms):', position_ms); // Debug log
-
+        
         // Starting playback
         const response = await fetch("/api/spotify/play", {
           method: "PUT",
@@ -333,22 +329,20 @@ export default function VinylPlayer({
             deviceId: device.id,
             trackUri: track.uri,
             contextUri: playlist ? `spotify:playlist:${playlist.id}` : undefined,
-            position_ms: position_ms || 0
+            position_ms: playbackState.progress_ms || 0,
+            offset: { uri: track.uri }
           }),
         });
-        const data = await response.json();
-        console.log('Play response:', data);
-        
+
         if (!response.ok) {
+          const data = await response.json();
           throw new Error(data.error || "Failed to start playback");
         }
       } else {
         // Pausing playback
         const response = await fetch("/api/spotify/pause", { method: "PUT" });
-        const data = await response.json();
-        console.log('Pause response:', data);
-        
         if (!response.ok) {
+          const data = await response.json();
           throw new Error(data.error || "Failed to pause playback");
         }
       }
