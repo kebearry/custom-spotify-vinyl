@@ -58,6 +58,8 @@ export default function VinylPlayer({
   const [isPremium, setIsPremium] = useState<boolean>(true);
   const [isLiked, setIsLiked] = useState(false);
   const [isPremiumChecked, setIsPremiumChecked] = useState<boolean>(false);
+  const [showLikeMessage, setShowLikeMessage] = useState(false);
+  const [likeMessage, setLikeMessage] = useState('');
   const playlistId = '1odn9BcsovHl9YoaOb38t6';
   const initialCheckDone = useRef(false);
 
@@ -647,6 +649,11 @@ export default function VinylPlayer({
       if (!response.ok) throw new Error(`Failed to ${isLiked ? 'remove' : 'save'} track`);
 
       setIsLiked(!isLiked);
+      
+      // Show message
+      setLikeMessage(isLiked ? 'Removed from Liked Songs' : 'Added to Liked Songs');
+      setShowLikeMessage(true);
+      setTimeout(() => setShowLikeMessage(false), 2000);
     } catch (error) {
       console.error('Error toggling saved status:', error);
       setError(error instanceof Error ? error.message : 'Failed to update liked status');
@@ -1257,6 +1264,26 @@ export default function VinylPlayer({
                 <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Like Message Toast */}
+      {showLikeMessage && (
+        <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-50">
+          <div className={`px-6 py-3 rounded-lg shadow-lg border flex items-center gap-2 ${
+            isLiked 
+              ? 'bg-emerald-100 border-emerald-200 text-emerald-800' 
+              : 'bg-slate-100 border-slate-200 text-slate-800'
+          }`}>
+            <svg className={`w-5 h-5 ${
+              isLiked 
+                ? 'text-emerald-600' 
+                : 'text-slate-600'
+            }`} fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+            </svg>
+            <span className="font-medium">{likeMessage}</span>
           </div>
         </div>
       )}
