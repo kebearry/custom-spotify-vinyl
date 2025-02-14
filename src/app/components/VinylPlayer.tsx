@@ -604,6 +604,37 @@ export default function VinylPlayer({
     };
   }, []);
 
+  const playTrack = async (selectedTrack: Track) => {
+    try {
+      if (!device || !playlist) return;
+
+      const response = await fetch("/api/spotify/play", {
+        method: "PUT",
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          deviceId: device.id,
+          contextUri: `spotify:playlist:${playlist.id}`,
+          offset: { uri: selectedTrack.uri },
+          position_ms: 0
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to play selected track");
+      }
+
+      setTimeout(() => {
+        getCurrentTrack();
+        getQueueInfo();
+      }, 300);
+    } catch (error) {
+      console.error("Error playing track:", error);
+      setError(error instanceof Error ? error.message : "Failed to play track");
+    }
+  };
+
   // Device check conditional return
   if (!device) {
     return (
@@ -1001,11 +1032,12 @@ export default function VinylPlayer({
               {playlist.tracks.items.map((playlistTrack, index) => (
                 <div
                   key={playlistTrack.track.id}
-                  className={`group flex items-center gap-4 px-6 py-4 transition-all duration-200 border-b border-slate-100 ${
-                    track?.id === playlistTrack.track.id
+                  onClick={() => playTrack(playlistTrack.track)}
+                  className={`group flex items-center gap-4 px-6 py-4 transition-all duration-200 border-b border-slate-100 cursor-pointer 
+                    ${track?.id === playlistTrack.track.id
                       ? "bg-blue-50"
                       : "hover:bg-slate-50"
-                  }`}
+                    }`}
                 >
                   {/* Track Number */}
                   <span
@@ -1032,7 +1064,7 @@ export default function VinylPlayer({
                       </p>
 
                       {/* Playing Indicator */}
-                      {track?.id === playlistTrack.track.id && (
+                      {track?.id === playlistTrack.track.id && isPlaying && (
                         <div className="flex items-center gap-[2px]">
                           {[...Array(3)].map((_, i) => (
                             <div
@@ -1062,15 +1094,31 @@ export default function VinylPlayer({
                     </p>
                   </div>
 
-                  {/* Duration or other metadata could go here */}
-                  <div
-                    className={`text-sm ${
-                      track?.id === playlistTrack.track.id
-                        ? "text-blue-600"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    {/* You could add track duration here if available */}
+                  {/* Play Button - Always visible with enhanced styling */}
+                  <div className="flex-shrink-0">
+                    <button 
+                      className={`p-3 rounded-full transition-all duration-200 ${
+                        track?.id === playlistTrack.track.id 
+                          ? isPlaying
+                            ? 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                            : 'bg-blue-500 text-white hover:bg-blue-600'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800'
+                      }`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        playTrack(playlistTrack.track);
+                      }}
+                    >
+                      {track?.id === playlistTrack.track.id && isPlaying ? (
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                      )}
+                    </button>
                   </div>
                 </div>
               ))}
