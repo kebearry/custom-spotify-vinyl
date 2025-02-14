@@ -395,7 +395,39 @@ export default function VinylPlayer({
 
   const skipToNext = async () => {
     try {
-      await fetch("/api/spotify/next-track", { method: "POST" });
+      if (!device || !playlist) return;
+
+      // Get current track index
+      const currentIndex = playlist.tracks.items.findIndex(
+        item => item.track.id === track?.id
+      );
+
+      // Get next track in playlist
+      const nextTrackInPlaylist = playlist.tracks.items[currentIndex + 1]?.track;
+
+      if (!nextTrackInPlaylist) {
+        // If we're at the end of the playlist, optionally loop to beginning
+        return;
+      }
+
+      // Play the next track in context
+      const response = await fetch("/api/spotify/play", {
+        method: "PUT",
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          deviceId: device.id,
+          contextUri: `spotify:playlist:${playlist.id}`,
+          offset: { uri: nextTrackInPlaylist.uri },
+          position_ms: 0
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to skip to next track");
+      }
+
       setTimeout(() => {
         getCurrentTrack();
         getQueueInfo();
